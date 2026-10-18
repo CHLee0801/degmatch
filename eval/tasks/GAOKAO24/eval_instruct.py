@@ -1,0 +1,199 @@
+import json
+import os
+import logging
+from typing import Any, Dict, List, Optional
+
+import numpy as np
+from lm_eval.api.instance import Instance
+from lm_eval.api.model import LM
+from lm_eval.tasks.hendrycks_math.utils import is_equiv, last_boxed_only_string, remove_boxed
+
+from datasets import load_dataset
+from eval.task import BaseBenchmark
+
+from matharena.parser import extract_answer, parse_answer, check_answers, WarningType
+from matharena.possible_issues import check_number_proximity_any_order, check_all_numbers, check_output_length
+
+# Modified version of hendrycks_math with additional instruction to mark the solution with \\boxed
+PROMPT = """Problem: {problem}\nPlease reason step by step, and put your final answer within \\boxed{{}}.\nAnswer:"""
+
+
+# [DeGMatch] grade with math-verify (handles symbolic, interval and percentage answers; the matharena parser fails to self-match 9-25% of the gold answers here)
+from math_verify import parse as _mv_parse, verify as _mv_verify
+def _last_boxed(text):
+    i = text.rfind("\\boxed")
+    if i < 0: return ""
+    j = text.find("{", i)
+    if j < 0: return ""
+    depth = 0
+    for k in range(j, len(text)):
+        if text[k] == "{": depth += 1
+        elif text[k] == "}":
+            depth -= 1
+            if depth == 0: return text[j + 1:k]
+    return ""
+def _mv_correct(gold, pred):
+    if not pred: return False
+    try:
+        g = _mv_parse("$" + gold + "$", parsing_timeout=None); p = _mv_parse("\\boxed{" + pred + "}", parsing_timeout=None)
+        return bool(g) and bool(p) and bool(_mv_verify(g, p, timeout_seconds=None))
+    except Exception:
+        return False
+
+class GAOKAO24Benchmark(BaseBenchmark):
+    """
+    GAOKAO24 Benchmark for evaluating the math reasoning of LLMs.
+    https://huggingface.co/datasets/math-ai/olympiadbench
+
+    Follows the evaluation logic of hendrycks_math answer extraction.
+    """
+
+    def __init__(
+        self,
+        dataset_name: str = "math-ai/olympiadbench",
+        debug: bool = False,
+        max_tokens: Optional[int] = None,
+        seed: List[int] = [0, 1234, 1234, 1234],
+        logger: Optional[logging.Logger] = None,
+        system_instruction: Optional[str] = None,
+    ):
+        """
+        Initialize GAOKAO24 benchmark.
+
+        Args:
+            dataset_name: Dataset containing the GAOKAO24 dataset (id, answer)
+            debug: If set, only evaluate on 2 examples
+            seed: Random seed for reproducibility. Default is [0, 1234, 1234, 1234] for lm-eval-harness.
+            logger: Optional logger instance
+            system_instruction: Optional system instruction for the model
+        """
+        super().__init__(logger=logger, system_instruction=system_instruction)
+        self.dataset_name = dataset_name
+        self.debug = debug
+        self.max_new_tokens = (
+            max_tokens if max_tokens is not None else 32768
+        )  # set higher to avoid truncation for reasoning models
+        self.seed = seed
+        # [DeGMatch] DP repeat patch
+        self.n_repeat = int(os.environ.get("GAOKAO24_NREPEAT", 16))
+        self._rep_offset = int(os.environ.get("GAOKAO24_REP_OFFSET", 0))
+
+    def generate_responses(self, model: LM) -> Dict[str, Any]:
+        """
+        Generate solution completions using the provided model.
+
+        Args:
+            model: Language model
+
+        Returns:
+            Dictionary containing generated responses and temporary directory,
+            or None for non-primary ranks
+        """
+        examples = self.load_questions()
+        # Prepare instances for model
+        all_outputs = []
+
+        for i in range(self.n_repeat):
+            all_instances = []
+            seed = [s + i + self._rep_offset for s in self.seed]
+
+            for idx, example in enumerate(examples):
+                messages = [
+                    {"role": "user", "content": PROMPT.format(problem=example["problem"])},
+                ]
+
+                templated_messages = self._prepare_messages(messages, model)
+
+                instance = Instance(
+                    "generate_until",
+                    example,
+                    (
+                        templated_messages,
+                        {
+                            "do_sample": False,
+                            "max_new_tokens": self.max_new_tokens,
+                            "temperature": float(os.environ.get("EVAL_TEMPERATURE", 0.6)),
+                            "top_p": float(os.environ.get("EVAL_TOP_P", 0.95)),
+                            "seed": seed,
+                        },
+                    ),
+                    idx,
+                )
+
+                # Add repetition information to instance metadata
+                instance.repeat_idx = i
+                instance.metadata = {
+                    "problem_id": str(example["id"]) if "id" in example else str(idx),
+                    "expected_answer": str(example["answer"]),
+                    "reference_solution": str(example["solution"]) if "solution" in example else "",
+                }
+
+                all_instances.append(instance)
+
+            # Generate model responses
+            self.logger.info("Generating responses for GAOKAO24...")
+            outputs = self.compute(model, all_instances)
+            all_outputs.append(outputs)
+        # Return None early for non-primary ranks
+        if model.rank != 0:
+            return None
+
+        for example, outputs in zip(examples, zip(*all_outputs)):
+            example["model_outputs"] = list(outputs)
+            example["model_answers"] = [_last_boxed(o) for o in outputs]
+            example["label"] = []
+        return {"examples": examples}
+
+    def evaluate_responses(self, results: Dict[str, Any]) -> Dict[str, float]:
+        """Evaluate the generated solution completions."""
+
+        # Handle None result from non-primary ranks
+        if results is None:
+            return None
+
+        examples = results["examples"]
+        num_questions = len(examples)
+
+        # Calculate accuracy for each repetition
+        all_results = []
+        for i in range(self.n_repeat):
+            solved = 0
+            for example in examples:
+                is_correct = _mv_correct(str(example["answer"]), example["model_answers"][i])
+                example["label"].append(is_correct)
+                solved += is_correct
+            all_results.append(
+                {
+                    "repetition": i + 1,
+                    "num_total": num_questions,
+                    "num_solved": solved,
+                    "accuracy": solved / num_questions,
+                }
+            )
+
+        # Calculate overall statistics
+        solved_avg = np.mean([result["num_solved"] for result in all_results])
+        accuracy_avg = np.mean([result["accuracy"] for result in all_results])
+        accuracy_std = np.std([result["accuracy"] for result in all_results])
+        accuracy_std_err = np.std([result["accuracy"] for result in all_results]) / np.sqrt(self.n_repeat)
+
+        results.update(
+            {
+                "num_total": num_questions,
+                "solved_avg": solved_avg,
+                "run_stats": all_results,
+                "accuracy_avg": accuracy_avg,
+                "accuracy_std_err": accuracy_std_err,
+                "num_repeat": self.n_repeat,
+            }
+        )
+
+        return results
+
+    def load_questions(self) -> List[Dict[str, str]]:
+        """Local json (id, problem, answer) shipped next to this file: gaokao24_eval.json"""
+        rows = json.load(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "gaokao24_eval.json")))
+        out = [{"id": str(r["id"]), "problem": r["problem"], "answer": str(r["answer"]), "solution": ""} for r in rows]
+        if self.debug: out = out[:2]
+        self.logger.info(f"Loaded {len(out)} questions for GAOKAO24")
+        return out

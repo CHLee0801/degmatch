@@ -1,0 +1,33 @@
+--- a/eval/eval.py
++++ b/eval/eval.py
+@@ -4,6 +4,8 @@
+ import logging
+ import os
+ import sys
++
++sys.set_int_max_str_digits(0)  # [DeGMatch] allow serializing very large integers
+ import time
+ import math
+ from typing import Dict, List, Optional, Union
+@@ -24,9 +26,18 @@
+ from lm_eval.utils import sanitize_model_name, simple_parse_args_string
+ from lm_eval.utils import handle_non_serializable as _orig_handle
+ 
+-from eval.chat_benchmarks.curator_lm import CuratorAPIModel  # register curator model
+-from eval.chat_benchmarks.precomputed_hf_lm import PrecomputedHFLM  # register precomputed_hf model
+-from eval.chat_benchmarks.upload_to_hf_lm import UploadInstancesToHF  # register upload_to_hf model
++try:  # [DeGMatch] optional: curator is only needed for --model curator
++    from eval.chat_benchmarks.curator_lm import CuratorAPIModel  # register curator model
++except Exception as _e:  # pragma: no cover
++    logging.getLogger(__name__).warning(f"curator_lm not registered ({_e})")
++try:
++    from eval.chat_benchmarks.precomputed_hf_lm import PrecomputedHFLM  # register precomputed_hf model
++except Exception as _e:  # pragma: no cover
++    logging.getLogger(__name__).warning(f"precomputed_hf_lm not registered ({_e})")
++try:
++    from eval.chat_benchmarks.upload_to_hf_lm import UploadInstancesToHF  # register upload_to_hf model
++except Exception as _e:  # pragma: no cover
++    logging.getLogger(__name__).warning(f"upload_to_hf_lm not registered ({_e})")
+ from eval.constants import LIST_OPENAI_MODELS
+ from eval.eval_tracker import DCEvaluationTracker
+ from eval.task import TaskManager as InstructTaskManager

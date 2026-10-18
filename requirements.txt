@@ -1,0 +1,23 @@
+# Versions used in the paper (Python 3.12, CUDA 12.8).
+# We used two environments; packages that differ are marked.
+
+# selection (embeddings, gradients, scoring)
+torch==2.8.0
+numpy>=2.2
+scipy>=1.13
+pyarrow>=17
+math-verify==0.9.0    # eval/merge_results.py
+
+# training environment
+transformers==4.46.1  # training and gradient computation
+trl==0.12.0
+accelerate==1.0.1
+datasets==3.1.0
+liger-kernel==0.5.10
+
+# evaluation environment (separate venv)
+# transformers==4.56.2   # also needed for Qwen3-Embedding (>= 4.51) in degmatch/embed.py
+# vllm==0.10.2
+# lm_eval==0.4.7
+# datasets==5.0.1
+# + Evalchemy at commit cc756119 (see eval/setup_evalchemy.sh)
