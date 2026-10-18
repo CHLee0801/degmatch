@@ -1,4 +1,4 @@
-DeGMatch: Deconfounded Gradient Matching for Target-Aware Reasoning Data Selection
+# DeGMatch: Deconfounded Gradient Matching for Target-Aware Reasoning Data Selection
 
 This is the official github repository for 'DeGMatch: Deconfounded Gradient Matching for Target-Aware Reasoning Data Selection' [[Paper](TBD)].
 
