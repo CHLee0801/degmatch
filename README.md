@@ -1,10 +1,18 @@
-# DeGMatch: Deconfounded Gradient Matching for Target-Aware Reasoning Data Selection
+# DeGMatch: Target-Aware Reasoning Data Selection via Deconfounded Gradient Matching
 
-This is the official github repository for 'DeGMatch: Deconfounded Gradient Matching for Target-Aware Reasoning Data Selection' [[Paper](TBD)].
+This is the official github repository for 'DeGMatch: Target-Aware Reasoning Data Selection via Deconfounded Gradient Matching' [[arXiv](https://arxiv.org/abs/2610.24963)].
 
 Citation:
 ```
-TBD
+@misc{lee2026degmatchtargetawarereasoningdata,
+      title={DeGMatch: Target-Aware Reasoning Data Selection via Deconfounded Gradient Matching}, 
+      author={Changho Lee and Janghoon Han and Rajdeep Mukherjee and Yeda Song and Lening Nick Cui and Xinya Du and Honglak Lee},
+      year={2026},
+      eprint={2610.24963},
+      archivePrefix={arXiv},
+      primaryClass={cs.CL},
+      url={https://arxiv.org/abs/2610.24963}, 
+}
 ```
 
 
